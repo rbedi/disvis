@@ -1,9 +1,18 @@
 import os
 import errno
+import re
+
 try:
     import pyopencl as cl
 except ImportError:
     pass
+try:
+    from pyparsing import (Literal, Word, Combine, Optional, Forward,
+            ZeroOrMore, StringEnd, nums, alphas, alphanums,
+            )
+    PYPARSING = True
+except ImportError:
+    PYPARSING = False
     
 
 def get_queue():
@@ -89,3 +98,120 @@ def parse_interaction_selection(fid, pdb1, pdb2):
 
 
     return pdb1_sel, pdb2_sel
+
+
+if PYPARSING:
+    def parse_ambiguous_restraints(line):
+
+        # Define grammar
+        point = Literal('.')
+        plusorminus = Literal('+') | Literal('-')
+        lpar = Literal('(')
+        rpar = Literal(')')
+        l_or = Literal('or')
+        start = Literal('restraint')
+        at = Literal('@')
+        number = Word(nums)
+        integer = Combine(Optional(plusorminus) + number)
+        floatnumber = Combine(integer + Optional(point + Optional(number)))
+
+        atomname = Combine(at + Word(alphanums))
+        chain = Combine(point + Word(alphanums))
+        term = Combine(integer + Optional(chain) + Optional(atomname))
+        selection = Forward()
+        selection << term + ZeroOrMore(l_or + term)
+
+        pattern = (start + lpar + selection + rpar + lpar + selection + rpar +
+                floatnumber + floatnumber)
+
+        print pattern.parseString(line)
+
+
+class RestraintParser(object):
+
+    if PYPARSING:
+        # Define grammar
+        point = Literal('.')
+        plusorminus = Literal('+') | Literal('-')
+        lpar = Literal('(')
+        rpar = Literal(')')
+        l_or = Literal('or')
+        start = Literal('restraint')
+        at = Literal('@')
+        number = Word(nums)
+        integer = Combine(Optional(plusorminus) + number)
+        floatnumber = Combine(integer + Optional(point + Optional(number)))
+
+        atomname = Combine(at + Word(alphanums))
+        chain = Combine(point + Word(alphanums))
+        term = Combine(integer + Optional(chain) + Optional(atomname))
+        selection = Forward()
+        selection << term + ZeroOrMore(l_or + term)
+
+        pattern = (start + lpar + selection + rpar + lpar + selection +
+                rpar + floatnumber + floatnumber)
+    
+    def parse_file(self, fid):
+        restraints = []
+        with open(fid) as f:
+            for line in f:
+                restraints.append(self.parse_line(line))
+        return restraints
+
+    def parse_line(self, line):
+        if not line:
+            return
+
+        if line.startswith('#'):
+            return
+        elif line.startswith('restraint'):
+            if not PYPARSING:
+                msg = "Ambiguous restraints syntax requires the pyparsing package."
+                raise ImportError(msg)
+            return self._ambiguous_restraint(line)
+        # Ignore empty lines
+        elif not line.strip():
+            return
+        else:
+            return self._simple_restraint(line)
+
+    def _simple_restraint(self, line):
+        pass
+
+    def _ambiguous_restraint(self, line):
+        args = self.pattern.parseString(line).asList()
+
+        receptor_start = args.index('(') + 1
+        receptor_end = args.index(')')
+        ligand_start = receptor_end + 2
+        ligand_end = len(args) - 3
+
+        receptor_selection = []
+        for sel in args[receptor_start: receptor_end]:
+            if sel == 'or':
+                continue
+            receptor_selection.append(self._ambiguous_selection(sel))
+
+        ligand_selection = []
+        for sel in args[ligand_start: ligand_end]:
+            if sel == 'or':
+                continue
+            ligand_selection.append(self._ambiguous_selection(sel))
+
+        distances = [float(args[-2]), float(args[-1])]
+
+        return Restraint(receptor_selection, ligand_selection, distances)
+
+    def _ambiguous_selection(self, sel):
+        return zip(('resi', 'chain', 'name'), re.split('[.@]', sel))
+
+
+class Restraint(object):
+
+    def __init__(self, receptor_selection, ligand_selection, distances):
+
+        self.receptor_selection = receptor_selection
+        self.ligand_selection = ligand_selection
+        self.distances = distances
+
+
